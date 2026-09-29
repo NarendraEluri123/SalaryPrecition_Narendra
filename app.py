@@ -9,6 +9,8 @@ Run with:
 
 import os
 import pickle
+import subprocess
+import sys
 
 import numpy as np
 import pandas as pd
@@ -19,14 +21,49 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "models", "model.pkl")
 FEATURE_INFO_PATH = os.path.join(BASE_DIR, "models", "feature_info.pkl")
 
+
+def _run_training():
+    """Run train_model.py using the same Python interpreter."""
+    train_script = os.path.join(BASE_DIR, "train_model.py")
+    result = subprocess.run(
+        [sys.executable, train_script],
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0, result.stdout + result.stderr
+
+
 # ─────────────────────────── load model ───────────────────────────────────────
-@st.cache_resource(show_spinner="Loading ML model…")
+@st.cache_resource(show_spinner="Loading ML model...")
 def load_model():
-    with open(MODEL_PATH, "rb") as f:
-        model = pickle.load(f)
-    with open(FEATURE_INFO_PATH, "rb") as f:
-        info = pickle.load(f)
-    return model, info
+    # If model files are missing or stale, retrain automatically
+    if not os.path.exists(MODEL_PATH) or not os.path.exists(FEATURE_INFO_PATH):
+        with st.spinner("Model not found — training now (this takes ~30 seconds)..."):
+            ok, log = _run_training()
+        if not ok:
+            st.error("Training failed. Check logs.")
+            st.code(log)
+            st.stop()
+
+    try:
+        with open(MODEL_PATH, "rb") as f:
+            model = pickle.load(f)
+        with open(FEATURE_INFO_PATH, "rb") as f:
+            info = pickle.load(f)
+        return model, info
+    except Exception:
+        # Pickle mismatch — retrain with the current sklearn version
+        with st.spinner("Retraining model for this environment..."):
+            ok, log = _run_training()
+        if not ok:
+            st.error("Retraining failed. Check logs.")
+            st.code(log)
+            st.stop()
+        with open(MODEL_PATH, "rb") as f:
+            model = pickle.load(f)
+        with open(FEATURE_INFO_PATH, "rb") as f:
+            info = pickle.load(f)
+        return model, info
 
 
 # ─────────────────────────── page config ──────────────────────────────────────
@@ -45,14 +82,6 @@ based on census features.
 Fill in the details below and click **Predict**.
 """
 )
-
-# ─────────────────────────── check model exists ───────────────────────────────
-if not os.path.exists(MODEL_PATH) or not os.path.exists(FEATURE_INFO_PATH):
-    st.error(
-        "⚠️ Trained model not found. "
-        "Please run `python train_model.py` first to generate the model files."
-    )
-    st.stop()
 
 model, info = load_model()
 
